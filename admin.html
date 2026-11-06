@@ -16,6 +16,9 @@
         <h1 class="text-base sm:text-lg font-bold">落とし物管理システム（教員用）</h1>
       </div>
       <div class="flex items-center space-x-2">
+        <span id="systemTermBadge" class="hidden sm:inline-block text-xs bg-indigo-800 text-indigo-200 px-3 py-1 rounded-full font-semibold border border-indigo-500">
+          ...
+        </span>
         <a href="/" class="text-xs bg-indigo-600 hover:bg-indigo-500 px-3 py-1.5 rounded-full font-medium transition">
           生徒用画面を見る
         </a>
@@ -227,9 +230,23 @@
 
     <!-- ==================== タブ3: 返却履歴 ==================== -->
     <section id="tab-history" class="tab-panel hidden space-y-4">
-      <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
-        <h2 class="text-base sm:text-lg font-extrabold text-slate-800">返却済みアイテム台帳</h2>
-        <p class="text-xs text-slate-500">持ち主へ返却が完了した落とし物の履歴一覧です</p>
+      <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h2 class="text-base sm:text-lg font-extrabold text-slate-800">返却済みアイテム台帳（過去の記録）</h2>
+          <p class="text-xs text-slate-500">持ち主へ返却が完了した落とし物の履歴です。学期ごとに絞り込みやExcel(CSV)保存ができます。</p>
+        </div>
+        <div class="flex items-center space-x-2">
+          <select id="historyTermFilter" class="px-3 py-1.5 rounded-xl border border-slate-300 text-xs font-bold outline-none bg-slate-50">
+            <option value="すべて">全学期の履歴</option>
+          </select>
+          <button
+            id="exportCsvBtn"
+            type="button"
+            class="px-3.5 py-1.5 bg-green-600 hover:bg-green-700 text-white font-bold rounded-xl text-xs shadow transition flex items-center space-x-1"
+          >
+            <span>📥 Excel(CSV)出力</span>
+          </button>
+        </div>
       </div>
 
       <div class="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
@@ -544,7 +561,8 @@
         const created = await res.json();
 
         // 管理番号モーダルを大きく表示
-        document.getElementById('registeredNumberDisplay').textContent = `No.${created.id}`;
+        const dispNum = created.term_item_number ? `No.${created.term_item_number}` : `No.${created.id}`;
+        document.getElementById('registeredNumberDisplay').textContent = dispNum;
         const regModal = document.getElementById('registeredModal');
         regModal.classList.remove('hidden');
         regModal.classList.add('flex');
@@ -618,11 +636,12 @@
             <div class="w-24 h-24 rounded-xl overflow-hidden bg-slate-100 shrink-0 relative">
               <img src="${escapeHtml(item.image_data)}" class="w-full h-full object-cover" />
               <span class="absolute top-1 left-1 bg-indigo-600 text-white text-xs font-extrabold px-2 py-0.5 rounded-full">
-                No.${item.id}
+                No.${item.term_item_number || item.id}
               </span>
             </div>
             <div class="flex-1 min-w-0 space-y-1 text-xs">
               <div class="flex items-center gap-1.5 flex-wrap">
+                <span class="bg-indigo-50 text-indigo-700 font-bold px-1.5 py-0.5 rounded text-[11px]">${escapeHtml(item.term_name || '現学期')}</span>
                 <span class="bg-slate-100 text-slate-700 font-bold px-2 py-0.5 rounded">${escapeHtml(item.category)}</span>
                 ${
                   item.has_personal_info
@@ -656,8 +675,9 @@
     // 返却モーダル制御
     const returnModal = document.getElementById('returnModal');
     function openReturnModal(item) {
+      const dispNum = `No.${item.term_item_number || item.id}`;
       document.getElementById('returnItemIdInput').value = item.id;
-      document.getElementById('returnModalItemTitle').textContent = `No.${item.id} ${item.public_tags || item.category}`;
+      document.getElementById('returnModalItemTitle').textContent = `${dispNum} ${item.public_tags || item.category}`;
       document.getElementById('returnModalSecretText').textContent = item.secret_memo || '（特記事項なし）';
       document.getElementById('returnedToInput').value = '';
       returnModal.classList.remove('hidden');
@@ -694,7 +714,10 @@
 
     // ==================== タブ3: 返却履歴 ====================
     async function loadReturnedHistory() {
-      const res = await adminFetch('/api/admin/returned-history');
+      const termSelect = document.getElementById('historyTermFilter');
+      const selectedTerm = termSelect ? termSelect.value : 'すべて';
+      const url = selectedTerm === 'すべて' ? '/api/admin/returned-history' : `/api/admin/returned-history?term=${encodeURIComponent(selectedTerm)}`;
+      const res = await adminFetch(url);
       if (!res.ok) return;
       const rows = await res.json();
       const tbody = document.getElementById('historyTableBody');
@@ -710,8 +733,12 @@
       rows.forEach((item) => {
         const tr = document.createElement('tr');
         tr.className = 'hover:bg-slate-50';
+        const dispNum = item.term_item_number ? `No.${item.term_item_number}` : `No.${item.id}`;
         tr.innerHTML = `
-          <td class="py-2.5 px-3 font-extrabold text-indigo-700">No.${item.id}</td>
+          <td class="py-2.5 px-3 font-extrabold text-indigo-700">
+            <div>${dispNum}</div>
+            <div class="text-[10px] text-slate-400 font-normal">${escapeHtml(item.term_name || '')}</div>
+          </td>
           <td class="py-2.5 px-3">
             <img src="${escapeHtml(item.image_data)}" class="w-11 h-11 object-cover rounded-lg border border-slate-200" />
           </td>
@@ -730,6 +757,42 @@
         tbody.appendChild(tr);
       });
     }
+
+    // 学期情報とCSV出力
+    async function loadSystemInfo() {
+      try {
+        const res = await adminFetch('/api/admin/system-info');
+        if (!res.ok) return;
+        const info = await res.json();
+        const badge = document.getElementById('systemTermBadge');
+        if (badge) {
+          badge.textContent = `📅 ${info.current_term} (次: No.${info.next_item_number})`;
+        }
+        const filterSelect = document.getElementById('historyTermFilter');
+        if (filterSelect && info.all_terms) {
+          const curVal = filterSelect.value;
+          filterSelect.innerHTML = '<option value="すべて">全学期の履歴</option>';
+          info.all_terms.forEach((t) => {
+            const opt = document.createElement('option');
+            opt.value = t;
+            opt.textContent = t;
+            filterSelect.appendChild(opt);
+          });
+          filterSelect.value = curVal || 'すべて';
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    loadSystemInfo();
+
+    document.getElementById('historyTermFilter').addEventListener('change', loadReturnedHistory);
+
+    document.getElementById('exportCsvBtn').addEventListener('click', () => {
+      const selectedTerm = document.getElementById('historyTermFilter').value;
+      const url = selectedTerm === 'すべて' ? '/api/admin/export-csv' : `/api/admin/export-csv?term=${encodeURIComponent(selectedTerm)}`;
+      window.location.href = url;
+    });
 
     // ==================== タブ4: 期限切れ一括処分 ====================
     async function loadExpiredItems() {

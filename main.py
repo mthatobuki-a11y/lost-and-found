@@ -1,57 +1,184 @@
 import base64
+import csv
+import io
 import json
 import os
 import sqlite3
+import urllib.parse
 from datetime import datetime, timedelta
-from typing import List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
-from google import genai
-from google.genai import types
 from pydantic import BaseModel, Field
 
 load_dotenv()
 
-DB_PATH = "lost_and_found.db"
-
 app = FastAPI(title="学校向け 落とし物管理Webアプリ")
 
+# --- データベース接続（PostgreSQLとSQLiteの自動判別ハイブリッド） ---
+DATABASE_URL = os.getenv("DATABASE_URL")
 
-def get_db_connection():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+USE_POSTGRES = False
+if DATABASE_URL:
+    USE_POSTGRES = True
+    try:
+        import psycopg2
+        import psycopg2.extras
+    except ImportError:
+        USE_POSTGRES = False
+
+DB_PATH = "lost_and_found.db"
+
+
+class DBClient:
+    def __init__(self):
+        self.is_pg = USE_POSTGRES
+
+    def get_conn(self):
+        if self.is_pg:
+            # RenderのPostgresURLは postgres:// から始まることがあるので postgresql:// に補正
+            url = DATABASE_URL
+            if url.startswith("postgres://"):
+                url = url.replace("postgres://", "postgresql://", 1)
+            conn = psycopg2.connect(url)
+            return conn
+        else:
+            conn = sqlite3.connect(DB_PATH)
+            conn.row_factory = sqlite3.Row
+            return conn
+
+    def execute(self, query: str, params: tuple = (), fetch: Literal["all", "one", "none"] = "none", return_last_id: bool = False):
+        conn = self.get_conn()
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) if self.is_pg else conn.cursor()
+        
+        # SQLiteの ? プレースホルダを PostgreSQL用 %s に置換
+        if self.is_pg:
+            # CAST(id AS TEXT) はそのままで両対応可能
+            pg_query = query.replace("?", "%s")
+            if return_last_id:
+                pg_query = pg_query.rstrip(" ;") + " RETURNING id;"
+            cursor.execute(pg_query, params)
+        else:
+            cursor.execute(query, params)
+
+        data = None
+        last_id = None
+        if return_last_id:
+            if self.is_pg:
+                res = cursor.fetchone()
+                last_id = res["id"] if isinstance(res, dict) else res[0]
+            else:
+                last_id = cursor.lastrowid
+
+        if fetch == "all":
+            rows = cursor.fetchall()
+            if self.is_pg:
+                data = [dict(r) for r in rows]
+            else:
+                data = [dict(r) for r in rows]
+        elif fetch == "one":
+            row = cursor.fetchone()
+            if row:
+                data = dict(row)
+
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        if return_last_id:
+            return last_id
+        return data
+
+
+db = DBClient()
 
 
 def init_db():
-    conn = get_db_connection()
+    conn = db.get_conn()
     cursor = conn.cursor()
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS items (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            image_data TEXT NOT NULL,
-            category TEXT NOT NULL,
-            public_tags TEXT,
-            found_date TEXT NOT NULL,
-            found_location TEXT NOT NULL,
-            secret_memo TEXT,
-            has_personal_info BOOLEAN DEFAULT FALSE,
-            status TEXT DEFAULT '保管中',
-            expire_date TEXT NOT NULL,
-            returned_to TEXT,
-            returned_at TEXT,
-            handled_by TEXT
+    
+    # itemsテーブル
+    if db.is_pg:
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS items (
+                id SERIAL PRIMARY KEY,
+                term_name TEXT DEFAULT '現学期',
+                term_item_number INTEGER,
+                image_data TEXT NOT NULL,
+                category TEXT NOT NULL,
+                public_tags TEXT,
+                found_date TEXT NOT NULL,
+                found_location TEXT NOT NULL,
+                secret_memo TEXT,
+                has_personal_info BOOLEAN DEFAULT FALSE,
+                status TEXT DEFAULT '保管中',
+                expire_date TEXT NOT NULL,
+                returned_to TEXT,
+                returned_at TEXT,
+                handled_by TEXT
+            );
+            """
         )
-        """
-    )
+    else:
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                term_name TEXT DEFAULT '現学期',
+                term_item_number INTEGER,
+                image_data TEXT NOT NULL,
+                category TEXT NOT NULL,
+                public_tags TEXT,
+                found_date TEXT NOT NULL,
+                found_location TEXT NOT NULL,
+                secret_memo TEXT,
+                has_personal_info BOOLEAN DEFAULT FALSE,
+                status TEXT DEFAULT '保管中',
+                expire_date TEXT NOT NULL,
+                returned_to TEXT,
+                returned_at TEXT,
+                handled_by TEXT
+            );
+            """
+        )
+    
+    # 旧カラムが存在しない場合のマイグレーション（SQLite用）
+    try:
+        cursor.execute("SELECT term_item_number FROM items LIMIT 1")
+    except Exception:
+        conn.rollback() if db.is_pg else None
+        cursor.execute("ALTER TABLE items ADD COLUMN term_item_number INTEGER;")
+        cursor.execute("ALTER TABLE items ADD COLUMN term_name TEXT DEFAULT '現学期';")
+        conn.commit()
+
+    # 既存データで term_item_number が NULL のものを id と同期
+    cursor.execute("UPDATE items SET term_item_number = id WHERE term_item_number IS NULL;")
     conn.commit()
+    cursor.close()
     conn.close()
 
 
 init_db()
+
+
+# --- 現在の学期を取得するヘルパー ---
+def get_current_term_name(dt: Optional[datetime] = None) -> str:
+    if dt is None:
+        dt = datetime.now()
+    # 日本の学校暦（4月〜7月: 1学期, 8月〜12月: 2学期, 1月〜3月: 3学期）
+    year = dt.year
+    month = dt.month
+    if 4 <= month <= 7:
+        return f"{year}年度 1学期"
+    elif 8 <= month <= 12:
+        return f"{year}年度 2学期"
+    else:
+        school_year = year - 1
+        return f"{school_year}年度 3学期"
 
 
 # --- Schemas ---
@@ -67,25 +194,6 @@ CategoryType = Literal[
     "傘・雨具",
     "その他",
 ]
-
-
-class AIAnalysisResult(BaseModel):
-    category: CategoryType = Field(
-        description="カテゴリ（『水筒・弁当』『文房具』『衣類・体操服』『傘・雨具』『その他』のいずれか1つ）"
-    )
-    public_tags: str = Field(
-        description="生徒公開用の短い特徴タグ（色、一般的な形状、ブランドなど20文字以内。個人情報や記名は絶対に含めないこと）"
-    )
-    secret_memo: str = Field(
-        description="【非公開】窓口での本人確認用メモ（記名内容、イニシャル、細かい傷・シール・キーホルダーの特徴など詳細に記載）"
-    )
-    has_personal_info: bool = Field(
-        description="画像内に氏名、クラス、電話番号、住所、顔写真などの個人情報や記名が写り込んでいる場合はtrue、なければfalse"
-    )
-
-
-class AnalyzeImageRequest(BaseModel):
-    image_data: str
 
 
 class CreateItemRequest(BaseModel):
@@ -108,20 +216,19 @@ class BatchDisposeRequest(BaseModel):
     handled_by: Optional[str] = ""
 
 
+class ResetTermRequest(BaseModel):
+    new_term_name: str
+
+
 class PublicItemResponse(BaseModel):
     id: int
+    term_item_number: int
+    term_name: Optional[str]
     image_data: str
     category: str
     public_tags: Optional[str]
     found_date: str
     found_location: str
-
-
-# --- Auth Dependency (パスワード不要化) ---
-
-
-def verify_admin():
-    return True
 
 
 # --- Public API ---
@@ -132,11 +239,8 @@ def get_public_items(
     q: Optional[str] = Query(None, description="検索キーワード（管理番号、特徴タグ、拾得場所）"),
     category: Optional[str] = Query(None, description="カテゴリフィルタ"),
 ):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
     query = """
-        SELECT id, image_data, category, public_tags, found_date, found_location
+        SELECT id, COALESCE(term_item_number, id) as term_item_number, term_name, image_data, category, public_tags, found_date, found_location
         FROM items
         WHERE status = '保管中'
     """
@@ -148,87 +252,44 @@ def get_public_items(
 
     if q and q.strip():
         kw = f"%{q.strip()}%"
-        # 管理番号、特徴タグ、拾得場所を横断部分一致検索
         clean_id = q.strip().replace("No.", "").replace("no.", "").replace("#", "")
-        query += " AND (CAST(id AS TEXT) LIKE ? OR CAST(id AS TEXT) = ? OR public_tags LIKE ? OR found_location LIKE ?)"
-        params.extend([kw, clean_id, kw, kw])
+        query += " AND (CAST(term_item_number AS TEXT) LIKE ? OR CAST(id AS TEXT) = ? OR CAST(term_item_number AS TEXT) = ? OR public_tags LIKE ? OR found_location LIKE ?)"
+        params.extend([kw, clean_id, clean_id, kw, kw])
 
     query += " ORDER BY id DESC"
-    cursor.execute(query, params)
-    rows = cursor.fetchall()
-    conn.close()
-
-    return [dict(row) for row in rows]
+    rows = db.execute(query, tuple(params), fetch="all")
+    return rows
 
 
 # --- Admin APIs ---
 
 
-@app.get("/api/admin/verify")
-def check_admin_auth(_: bool = Depends(verify_admin)):
-    return {"status": "ok"}
-
-
-@app.post("/api/admin/analyze-image", response_model=AIAnalysisResult)
-def analyze_image(req: AnalyzeImageRequest, _: bool = Depends(verify_admin)):
-    load_dotenv(override=True)
-    api_key = os.getenv("GEMINI_API_KEY", "").strip()
-    if not api_key:
-        raise HTTPException(
-            status_code=400,
-            detail="環境変数 GEMINI_API_KEY が設定されていません。.envファイルを確認してください。",
-        )
-
-    image_str = req.image_data
-    mime_type = "image/jpeg"
-    if "," in image_str:
-        header, b64_data = image_str.split(",", 1)
-        if "image/png" in header:
-            mime_type = "image/png"
-        elif "image/webp" in header:
-            mime_type = "image/webp"
-    else:
-        b64_data = image_str
-
-    try:
-        image_bytes = base64.b64decode(b64_data)
-    except Exception:
-        raise HTTPException(status_code=400, detail="画像データのデコードに失敗しました。")
-
-    prompt = (
-        "この学校の落とし物の画像を解析し、指定されたJSONスキーマに従って情報を抽出してください。\n"
-        "1. category: 「水筒・弁当」「文房具」「衣類・体操服」「傘・雨具」「その他」から最も適切なものを1つ選択。\n"
-        "2. public_tags: 生徒向け公開カタログに表示する短い特徴タグ（色・メーカー・種類など、20文字以内）。"
-        "※注意：ここには記名（氏名・イニシャル）や固有の暗証番号など個人情報は絶対に含めないでください。\n"
-        "3. secret_memo: 教員が窓口で持ち主本人か確認するための非公開メモ。写っている記名、クラス・名前、キーホルダーやシールの詳細、傷の位置などを具体的に記述してください。\n"
-        "4. has_personal_info: 画像内に名前・苗字・イニシャル・クラス・学年・個人を特定できる情報が写り込んでいる場合は true、なければ false にしてください。"
+@app.get("/api/admin/system-info")
+def get_system_info():
+    current_term = get_current_term_name()
+    # 現学期に登録された最新の term_item_number を取得
+    row = db.execute(
+        "SELECT MAX(term_item_number) as max_num FROM items WHERE term_name = ?",
+        (current_term,),
+        fetch="one",
     )
+    max_num = row.get("max_num") if row and row.get("max_num") is not None else 0
 
-    try:
-        client = genai.Client(api_key=api_key)
-        response = client.models.generate_content(
-            model="gemini-3.8-flash",
-            contents=[
-                types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
-                prompt,
-            ],
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=AIAnalysisResult,
-                temperature=0.1,
-            ),
-        )
-        result_data = json.loads(response.text)
-        # 20文字制限の安全調整
-        if "public_tags" in result_data and result_data["public_tags"]:
-            result_data["public_tags"] = result_data["public_tags"][:20]
-        return result_data
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Gemini AI解析エラー: {str(e)}")
+    # 過去学期の一覧
+    terms = db.execute(
+        "SELECT DISTINCT term_name FROM items WHERE term_name IS NOT NULL ORDER BY term_name DESC",
+        fetch="all",
+    )
+    return {
+        "current_term": current_term,
+        "next_item_number": max_num + 1,
+        "database_type": "PostgreSQL (クラウド永久保存)" if db.is_pg else "SQLite (ローカル)",
+        "all_terms": [t["term_name"] for t in terms],
+    }
 
 
 @app.post("/api/admin/items")
-def create_item(req: CreateItemRequest, _: bool = Depends(verify_admin)):
+def create_item(req: CreateItemRequest):
     today_dt = datetime.now()
     found_date_str = req.found_date if req.found_date else today_dt.strftime("%Y-%m-%d")
     try:
@@ -240,16 +301,29 @@ def create_item(req: CreateItemRequest, _: bool = Depends(verify_admin)):
     expire_date_str = (base_dt + timedelta(days=90)).strftime("%Y-%m-%d")
     public_tags_trimmed = (req.public_tags or "")[:20]
 
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute(
+    # 現在の学期名
+    current_term = get_current_term_name(base_dt)
+
+    # 学期内での次の連番を計算 (1, 2, 3...)
+    row = db.execute(
+        "SELECT MAX(term_item_number) as max_num FROM items WHERE term_name = ?",
+        (current_term,),
+        fetch="one",
+    )
+    current_max = row.get("max_num") if row and row.get("max_num") is not None else 0
+    next_term_num = current_max + 1
+
+    new_id = db.execute(
         """
         INSERT INTO items (
+            term_name, term_item_number,
             image_data, category, public_tags, found_date, found_location,
             secret_memo, has_personal_info, status, expire_date
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, '保管中', ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '保管中', ?)
         """,
         (
+            current_term,
+            next_term_num,
             req.image_data,
             req.category,
             public_tags_trimmed,
@@ -259,40 +333,30 @@ def create_item(req: CreateItemRequest, _: bool = Depends(verify_admin)):
             bool(req.has_personal_info),
             expire_date_str,
         ),
+        return_last_id=True,
     )
-    new_id = cursor.lastrowid
-    conn.commit()
 
-    cursor.execute("SELECT * FROM items WHERE id = ?", (new_id,))
-    created_item = dict(cursor.fetchone())
-    conn.close()
+    created_item = db.execute("SELECT * FROM items WHERE id = ?", (new_id,), fetch="one")
     return created_item
 
 
 @app.get("/api/admin/items")
-def get_admin_items(_: bool = Depends(verify_admin)):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM items WHERE status = '保管中' ORDER BY id DESC")
-    rows = [dict(r) for r in cursor.fetchall()]
-    conn.close()
+def get_admin_items():
+    rows = db.execute("SELECT * FROM items WHERE status = '保管中' ORDER BY id DESC", fetch="all")
     return rows
 
 
 @app.post("/api/admin/items/{item_id}/return")
-def return_item(item_id: int, req: ReturnItemRequest, _: bool = Depends(verify_admin)):
+def return_item(item_id: int, req: ReturnItemRequest):
     if not req.returned_to.strip() or not req.handled_by.strip():
         raise HTTPException(status_code=400, detail="返却先と対応教員名は必須です。")
 
     returned_at_str = datetime.now().strftime("%Y-%m-%d %H:%M")
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT id FROM items WHERE id = ?", (item_id,))
-    if not cursor.fetchone():
-        conn.close()
+    item = db.execute("SELECT id FROM items WHERE id = ?", (item_id,), fetch="one")
+    if not item:
         raise HTTPException(status_code=404, detail="指定された落とし物が見つかりません。")
 
-    cursor.execute(
+    db.execute(
         """
         UPDATE items
         SET status = '返却済', returned_to = ?, returned_at = ?, handled_by = ?
@@ -300,67 +364,107 @@ def return_item(item_id: int, req: ReturnItemRequest, _: bool = Depends(verify_a
         """,
         (req.returned_to.strip(), returned_at_str, req.handled_by.strip(), item_id),
     )
-    conn.commit()
-    conn.close()
     return {"message": "返却処理が完了しました。", "id": item_id, "returned_at": returned_at_str}
 
 
 @app.get("/api/admin/returned-history")
-def get_returned_history(_: bool = Depends(verify_admin)):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM items WHERE status = '返却済' ORDER BY returned_at DESC, id DESC")
-    rows = [dict(r) for r in cursor.fetchall()]
-    conn.close()
+def get_returned_history(term: Optional[str] = Query(None)):
+    if term and term != "すべて":
+        rows = db.execute(
+            "SELECT * FROM items WHERE status = '返却済' AND term_name = ? ORDER BY returned_at DESC, id DESC",
+            (term,),
+            fetch="all",
+        )
+    else:
+        rows = db.execute("SELECT * FROM items WHERE status = '返却済' ORDER BY returned_at DESC, id DESC", fetch="all")
     return rows
 
 
 @app.get("/api/admin/expired-items")
-def get_expired_items(_: bool = Depends(verify_admin)):
+def get_expired_items():
     today_str = datetime.now().strftime("%Y-%m-%d")
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute(
+    rows = db.execute(
         """
         SELECT * FROM items
         WHERE status = '保管中' AND expire_date < ?
         ORDER BY expire_date ASC, id ASC
         """,
         (today_str,),
+        fetch="all",
     )
-    rows = [dict(r) for r in cursor.fetchall()]
-    conn.close()
     return rows
 
 
 @app.post("/api/admin/batch-dispose")
-def batch_dispose(req: BatchDisposeRequest, _: bool = Depends(verify_admin)):
+def batch_dispose(req: BatchDisposeRequest):
     if not req.item_ids:
         raise HTTPException(status_code=400, detail="処分対象のアイテムが選択されていません。")
 
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    placeholders = ",".join(["?"] * len(req.item_ids))
     disposed_at_str = datetime.now().strftime("%Y-%m-%d %H:%M")
     handled_by_val = req.handled_by.strip() if req.handled_by else "一括処分"
 
-    cursor.execute(
+    placeholders = ",".join(["?"] * len(req.item_ids))
+    db.execute(
         f"""
         UPDATE items
         SET status = '処分済', returned_at = ?, handled_by = ?
         WHERE id IN ({placeholders}) AND status = '保管中'
         """,
-        [disposed_at_str, handled_by_val] + req.item_ids,
+        tuple([disposed_at_str, handled_by_val] + req.item_ids),
     )
-    updated_count = cursor.rowcount
-    conn.commit()
-    conn.close()
-    return {"message": f"{updated_count}件のアイテムを処分済みに更新しました。", "disposed_count": updated_count}
+    return {"message": f"{len(req.item_ids)}件のアイテムを処分済みに更新しました。"}
 
 
-from fastapi.responses import FileResponse
+# --- 過去学期台帳のCSVエクスポート（過去の記録をまとめて保存・出力） ---
+@app.get("/api/admin/export-csv")
+def export_csv(term: Optional[str] = Query(None)):
+    query = "SELECT * FROM items"
+    params = ()
+    if term and term != "すべて":
+        query += " WHERE term_name = ?"
+        params = (term,)
+    query += " ORDER BY id ASC"
 
-# 静的ファイルの配信（staticフォルダにあってもルート直下にあっても自動対応）
+    rows = db.execute(query, params, fetch="all")
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "通しID", "学期", "学期内管理番号", "品目カテゴリ", "特徴タグ", "拾得日",
+        "拾得場所", "ステータス", "本人確認メモ", "個人情報検知",
+        "保管期限日", "返却先", "返却日時", "対応教員"
+    ])
+
+    for r in rows:
+        writer.writerow([
+            r.get("id"),
+            r.get("term_name") or "",
+            f"No.{r.get('term_item_number') or r.get('id')}",
+            r.get("category"),
+            r.get("public_tags") or "",
+            r.get("found_date"),
+            r.get("found_location"),
+            r.get("status"),
+            r.get("secret_memo") or "",
+            "あり" if r.get("has_personal_info") else "なし",
+            r.get("expire_date"),
+            r.get("returned_to") or "",
+            r.get("returned_at") or "",
+            r.get("handled_by") or "",
+        ])
+
+    csv_data = output.getvalue().encode("utf-8-sig")  # Excelで文字化けしないUTF-8 BOM付き
+    filename = f"lost_and_found_{term or 'all'}.csv"
+    quoted_filename = urllib.parse.quote(filename)
+
+    return Response(
+        content=csv_data,
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quoted_filename}"},
+    )
+
+
+# --- 静的ファイルの配信 ---
 @app.get("/")
 def serve_index():
     if os.path.exists("static/index.html"):

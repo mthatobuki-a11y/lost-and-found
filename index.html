@@ -236,7 +236,7 @@
               loading="lazy"
             />
             <span class="absolute top-2 left-2 bg-blue-600/95 text-white text-xs font-extrabold px-2.5 py-1 rounded-full shadow">
-              No.${item.id}
+              No.${item.term_item_number || item.id}
             </span>
             <span class="absolute bottom-2 right-2 bg-black/70 text-white text-[11px] font-medium px-2 py-0.5 rounded-md">
               ${escapeHtml(item.category)}
@@ -257,8 +257,9 @@
     }
 
     function openDetailModal(item) {
-      document.getElementById('modalId').textContent = `No.${item.id}`;
-      document.getElementById('modalIdGuide').textContent = `No.${item.id}`;
+      const displayNum = `No.${item.term_item_number || item.id}`;
+      document.getElementById('modalId').textContent = displayNum;
+      document.getElementById('modalIdGuide').textContent = displayNum;
       document.getElementById('modalImage').src = item.image_data;
       document.getElementById('modalCategory').textContent = item.category;
       document.getElementById('modalDate').textContent = `拾得日: ${item.found_date}`;
