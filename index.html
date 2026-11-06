@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>学校の落とし物検索カタログ</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    /* 横スクロールバー非表示用 */
+    .no-scrollbar::-webkit-scrollbar {
+      display: none;
+    }
+    .no-scrollbar {
+      -ms-overflow-style: none;
+      scrollbar-width: none;
+    }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen flex flex-col">
+
+  <!-- ヘッダー -->
+  <header class="bg-blue-600 text-white shadow-md sticky top-0 z-30">
+    <div class="max-w-4xl mx-auto px-4 py-3 flex items-center justify-between">
+      <div class="flex items-center space-x-2">
+        <span class="text-2xl" aria-hidden="true">🔍</span>
+        <div>
+          <h1 class="text-lg sm:text-xl font-bold leading-tight">落とし物検索カタログ</h1>
+          <p class="text-xs text-blue-100">自分の持ち物を見つけたら職員室へ</p>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- 検索・フィルタエリア -->
+  <section class="bg-white border-b border-slate-200 sticky top-[60px] z-20 shadow-sm">
+    <div class="max-w-4xl mx-auto px-4 py-3 space-y-3">
+      <!-- 検索バー -->
+      <div class="relative">
+        <input
+          id="searchInput"
+          type="text"
+          placeholder="管理番号・色・特徴・拾得場所で検索（例：青、体育館、12）"
+          class="w-full pl-10 pr-10 py-2.5 rounded-xl border border-slate-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none text-sm sm:text-base transition"
+        />
+        <span class="absolute left-3.5 top-3 text-slate-400">🔎</span>
+        <button
+          id="clearSearchBtn"
+          class="hidden absolute right-3 top-2.5 text-slate-400 hover:text-slate-600 text-sm px-1.5 py-0.5"
+          title="クリア"
+        >
+          ✕
+        </button>
+      </div>
+
+      <!-- カテゴリ別ワンタップタブ -->
+      <div id="categoryTabs" class="flex space-x-2 overflow-x-auto no-scrollbar pb-1">
+        <button data-cat="すべて" class="cat-tab shrink-0 px-4 py-1.5 rounded-full text-sm font-bold bg-blue-600 text-white shadow-sm transition">
+          すべて
+        </button>
+        <button data-cat="タブレット" class="cat-tab shrink-0 px-4 py-1.5 rounded-full text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition">
+          💻 タブレット
+        </button>
+        <button data-cat="スマホ" class="cat-tab shrink-0 px-4 py-1.5 rounded-full text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition">
+          📱 スマホ
+        </button>
+        <button data-cat="イヤホン" class="cat-tab shrink-0 px-4 py-1.5 rounded-full text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition">
+          🎧 イヤホン
+        </button>
+        <button data-cat="水筒・弁当" class="cat-tab shrink-0 px-4 py-1.5 rounded-full text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition">
+          🥤 水筒・弁当
+        </button>
+        <button data-cat="教科書" class="cat-tab shrink-0 px-4 py-1.5 rounded-full text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition">
+          📖 教科書
+        </button>
+        <button data-cat="文房具" class="cat-tab shrink-0 px-4 py-1.5 rounded-full text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition">
+          ✏️ 文房具
+        </button>
+        <button data-cat="衣類・体操服" class="cat-tab shrink-0 px-4 py-1.5 rounded-full text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition">
+          👕 衣類・体操服
+        </button>
+        <button data-cat="傘・雨具" class="cat-tab shrink-0 px-4 py-1.5 rounded-full text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition">
+          ☂️ 傘・雨具
+        </button>
+        <button data-cat="その他" class="cat-tab shrink-0 px-4 py-1.5 rounded-full text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition">
+          📦 その他
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <!-- メインコンテンツ -->
+  <main class="max-w-4xl w-full mx-auto px-4 py-5 flex-1">
+    <!-- 件数表示 -->
+    <div class="flex items-center justify-between mb-3">
+      <p id="itemCountText" class="text-sm text-slate-600 font-medium">読み込み中...</p>
+    </div>
+
+    <!-- タイルグリッド -->
+    <div id="itemsGrid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 sm:gap-4"></div>
+
+    <!-- 空状態メッセージ -->
+    <div id="emptyState" class="hidden text-center py-16 bg-white rounded-2xl border border-dashed border-slate-300 p-6 mt-2">
+      <div class="text-4xl mb-3">📭</div>
+      <p class="text-slate-700 font-bold text-base mb-1">該当する落とし物は見つかりませんでした</p>
+      <p class="text-slate-500 text-xs sm:text-sm">検索キーワードやカテゴリを変えてもう一度お試しください。</p>
+    </div>
+  </main>
+
+  <!-- 詳細モーダル -->
+  <div
+    id="detailModal"
+    class="fixed inset-0 bg-black/60 backdrop-blur-xs z-50 hidden items-center justify-center p-4"
+  >
+    <div class="bg-white rounded-2xl max-w-md w-full overflow-hidden shadow-2xl animate-fade-in">
+      <!-- モーダル上部：管理番号と閉じるボタン -->
+      <div class="bg-blue-600 text-white px-5 py-3.5 flex items-center justify-between">
+        <div class="flex items-center space-x-2">
+          <span class="text-xs bg-white/20 px-2.5 py-0.5 rounded-full font-semibold">管理番号</span>
+          <span id="modalId" class="text-xl font-extrabold tracking-wide">No.--</span>
+        </div>
+        <button
+          id="closeModalBtn"
+          class="text-white/90 hover:text-white text-2xl font-bold leading-none px-2"
+          aria-label="閉じる"
+        >
+          &times;
+        </button>
+      </div>
+
+      <!-- 画像 -->
+      <div class="bg-slate-900 flex items-center justify-center max-h-72 overflow-hidden">
+        <img id="modalImage" src="" alt="落とし物画像" class="object-contain max-h-72 w-full" />
+      </div>
+
+      <!-- 詳細情報 -->
+      <div class="p-5 space-y-4">
+        <div class="flex flex-wrap items-center gap-2">
+          <span id="modalCategory" class="text-xs font-bold bg-blue-100 text-blue-800 px-3 py-1 rounded-full"></span>
+          <span id="modalDate" class="text-xs text-slate-500 font-medium"></span>
+        </div>
+
+        <div class="space-y-2.5 text-sm">
+          <div class="bg-slate-50 p-3 rounded-xl border border-slate-200">
+            <p class="text-xs text-slate-500 font-semibold mb-0.5">特徴タグ</p>
+            <p id="modalTags" class="font-bold text-slate-800 text-base"></p>
+          </div>
+          <div class="bg-slate-50 p-3 rounded-xl border border-slate-200">
+            <p class="text-xs text-slate-500 font-semibold mb-0.5">拾得場所（見つかった場所）</p>
+            <p id="modalLocation" class="font-bold text-slate-800 text-base"></p>
+          </div>
+        </div>
+
+        <!-- 案内ボックス -->
+        <div class="bg-amber-50 border-2 border-amber-400 rounded-xl p-3.5 text-center">
+          <p class="text-amber-900 font-extrabold text-sm sm:text-base">
+            🏫 職員室で管理番号（<span id="modalIdGuide" class="underline">No.--</span>）を伝えてください
+          </p>
+          <p class="text-amber-700 text-xs mt-1">
+            受け取りの際に、記名や細かい特徴を確認します。
+          </p>
+        </div>
+
+        <button
+          id="closeModalBottomBtn"
+          class="w-full py-2.5 bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold rounded-xl transition text-sm"
+        >
+          閉じる
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- フッター -->
+  <footer class="bg-white border-t border-slate-200 py-4 text-center text-xs text-slate-400 mt-8">
+    学校向け 落とし物管理システム
+  </footer>
+
+  <script>
+    let allItems = [];
+    let currentCategory = 'すべて';
+    let currentQuery = '';
+
+    const searchInput = document.getElementById('searchInput');
+    const clearSearchBtn = document.getElementById('clearSearchBtn');
+    const categoryTabs = document.querySelectorAll('.cat-tab');
+    const itemsGrid = document.getElementById('itemsGrid');
+    const emptyState = document.getElementById('emptyState');
+    const itemCountText = document.getElementById('itemCountText');
+
+    const detailModal = document.getElementById('detailModal');
+    const closeModalBtn = document.getElementById('closeModalBtn');
+    const closeModalBottomBtn = document.getElementById('closeModalBottomBtn');
+
+    async function fetchPublicItems() {
+      try {
+        const params = new URLSearchParams();
+        if (currentCategory && currentCategory !== 'すべて') {
+          params.set('category', currentCategory);
+        }
+        if (currentQuery.trim() !== '') {
+          params.set('q', currentQuery.trim());
+        }
+
+        const res = await fetch(`/api/public/items?${params.toString()}`);
+        if (!res.ok) throw new Error('データの取得に失敗しました');
+        allItems = await res.json();
+        renderItems();
+      } catch (err) {
+        console.error(err);
+        itemCountText.textContent = '通信エラーが発生しました';
+      }
+    }
+
+    function renderItems() {
+      itemsGrid.innerHTML = '';
+      itemCountText.textContent = `保管中の落とし物: ${allItems.length} 件`;
+
+      if (allItems.length === 0) {
+        emptyState.classList.remove('hidden');
+        return;
+      }
+      emptyState.classList.add('hidden');
+
+      allItems.forEach((item) => {
+        const card = document.createElement('div');
+        card.className =
+          'bg-white rounded-2xl shadow-sm hover:shadow-md border border-slate-200 overflow-hidden cursor-pointer transition flex flex-col active:scale-[0.98]';
+        card.onclick = () => openDetailModal(item);
+
+        card.innerHTML = `
+          <div class="relative aspect-square bg-slate-100 overflow-hidden">
+            <img
+              src="${escapeHtml(item.image_data)}"
+              alt="${escapeHtml(item.public_tags || item.category)}"
+              class="w-full h-full object-cover"
+              loading="lazy"
+            />
+            <span class="absolute top-2 left-2 bg-blue-600/95 text-white text-xs font-extrabold px-2.5 py-1 rounded-full shadow">
+              No.${item.id}
+            </span>
+            <span class="absolute bottom-2 right-2 bg-black/70 text-white text-[11px] font-medium px-2 py-0.5 rounded-md">
+              ${escapeHtml(item.category)}
+            </span>
+          </div>
+          <div class="p-3 flex-1 flex flex-col justify-between space-y-1.5">
+            <p class="font-bold text-slate-800 text-sm line-clamp-1">
+              ${escapeHtml(item.public_tags || '特徴なし')}
+            </p>
+            <div class="text-xs text-slate-500 space-y-0.5">
+              <p class="truncate">📍 ${escapeHtml(item.found_location)}</p>
+              <p>📅 ${escapeHtml(item.found_date)}</p>
+            </div>
+          </div>
+        `;
+        itemsGrid.appendChild(card);
+      });
+    }
+
+    function openDetailModal(item) {
+      document.getElementById('modalId').textContent = `No.${item.id}`;
+      document.getElementById('modalIdGuide').textContent = `No.${item.id}`;
+      document.getElementById('modalImage').src = item.image_data;
+      document.getElementById('modalCategory').textContent = item.category;
+      document.getElementById('modalDate').textContent = `拾得日: ${item.found_date}`;
+      document.getElementById('modalTags').textContent = item.public_tags || '（記載なし）';
+      document.getElementById('modalLocation').textContent = item.found_location;
+
+      detailModal.classList.remove('hidden');
+      detailModal.classList.add('flex');
+    }
+
+    function closeDetailModal() {
+      detailModal.classList.add('hidden');
+      detailModal.classList.remove('flex');
+    }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
+    // イベント設定
+    let debounceTimer;
+    searchInput.addEventListener('input', (e) => {
+      currentQuery = e.target.value;
+      clearSearchBtn.classList.toggle('hidden', currentQuery === '');
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        fetchPublicItems();
+      }, 200);
+    });
+
+    clearSearchBtn.addEventListener('click', () => {
+      searchInput.value = '';
+      currentQuery = '';
+      clearSearchBtn.classList.add('hidden');
+      fetchPublicItems();
+    });
+
+    categoryTabs.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        currentCategory = btn.getAttribute('data-cat');
+        categoryTabs.forEach((b) => {
+          b.className =
+            'cat-tab shrink-0 px-4 py-1.5 rounded-full text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition';
+        });
+        btn.className =
+          'cat-tab shrink-0 px-4 py-1.5 rounded-full text-sm font-bold bg-blue-600 text-white shadow-sm transition';
+        fetchPublicItems();
+      });
+    });
+
+    closeModalBtn.addEventListener('click', closeDetailModal);
+    closeModalBottomBtn.addEventListener('click', closeDetailModal);
+    detailModal.addEventListener('click', (e) => {
+      if (e.target === detailModal) closeDetailModal();
+    });
+
+    // 初回読み込み
+    fetchPublicItems();
+  </script>
+</body>
+</html>
