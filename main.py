@@ -117,14 +117,10 @@ class PublicItemResponse(BaseModel):
     found_location: str
 
 
-# --- Auth Dependency ---
+# --- Auth Dependency (パスワード不要化) ---
 
 
-def verify_admin(x_admin_password: str = Header(None, alias="X-Admin-Password")):
-    load_dotenv(override=True)
-    expected_password = os.getenv("ADMIN_PASSWORD", "0711")
-    if not x_admin_password or x_admin_password != expected_password:
-        raise HTTPException(status_code=401, detail="管理者パスワードが正しくありません。")
+def verify_admin():
     return True
 
 

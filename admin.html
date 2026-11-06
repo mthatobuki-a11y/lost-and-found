@@ -8,36 +8,6 @@
 </head>
 <body class="bg-slate-100 text-slate-800 min-h-screen flex flex-col">
 
-  <!-- 初回パスワード認証モーダル -->
-  <div id="authModal" class="fixed inset-0 bg-slate-900/80 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-    <div class="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl space-y-4">
-      <div class="text-center space-y-1">
-        <div class="text-3xl">🔐</div>
-        <h2 class="text-lg font-extrabold text-slate-800">教員用管理画面 認証</h2>
-        <p class="text-xs text-slate-500">管理者パスワードを入力してください</p>
-      </div>
-      <form id="authForm" class="space-y-3">
-        <input
-          id="adminPasswordInput"
-          type="password"
-          placeholder="パスワード (初期値: 0711)"
-          required
-          class="w-full px-4 py-2.5 rounded-xl border border-slate-300 focus:border-indigo-600 focus:ring-2 focus:ring-indigo-200 outline-none text-sm"
-        />
-        <p id="authErrorMsg" class="text-xs text-red-600 font-semibold hidden"></p>
-        <button
-          type="submit"
-          class="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition text-sm shadow"
-        >
-          ログイン
-        </button>
-      </form>
-      <div class="text-center pt-1">
-        <a href="/" class="text-xs text-slate-500 hover:text-indigo-600 underline">← 生徒用検索カタログへ戻る</a>
-      </div>
-    </div>
-  </div>
-
   <!-- ヘッダー -->
   <header class="bg-indigo-700 text-white shadow-md sticky top-0 z-30">
     <div class="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
@@ -49,9 +19,6 @@
         <a href="/" class="text-xs bg-indigo-600 hover:bg-indigo-500 px-3 py-1.5 rounded-full font-medium transition">
           生徒用画面を見る
         </a>
-        <button id="logoutBtn" class="text-xs bg-indigo-900/60 hover:bg-indigo-900 px-3 py-1.5 rounded-full font-medium transition">
-          ロック
-        </button>
       </div>
     </div>
 
@@ -444,63 +411,19 @@
     }
     setTodayDate();
 
-    // 共通API呼び出し（X-Admin-Passwordヘッダー付与）
+    // 共通API呼び出し
     async function adminFetch(url, options = {}) {
       const headers = {
-        'X-Admin-Password': adminPassword,
         ...(options.headers || {}),
       };
       if (options.body && !headers['Content-Type']) {
         headers['Content-Type'] = 'application/json';
       }
-      const res = await fetch(url, { ...options, headers });
-      if (res.status === 401) {
-        sessionStorage.removeItem('ADMIN_PASSWORD');
-        authModal.classList.remove('hidden');
-        throw new Error('認証が必要です');
-      }
-      return res;
+      return await fetch(url, { ...options, headers });
     }
 
-    // 認証確認
-    async function verifyPassword(pw) {
-      adminPassword = pw;
-      try {
-        const res = await fetch('/api/admin/verify', {
-          headers: { 'X-Admin-Password': pw },
-        });
-        if (res.ok) {
-          sessionStorage.setItem('ADMIN_PASSWORD', pw);
-          authModal.classList.add('hidden');
-          authErrorMsg.classList.add('hidden');
-          return true;
-        } else {
-          authErrorMsg.textContent = 'パスワードが正しくありません。';
-          authErrorMsg.classList.remove('hidden');
-          return false;
-        }
-      } catch (e) {
-        authErrorMsg.textContent = 'サーバーと通信できませんでした。';
-        authErrorMsg.classList.remove('hidden');
-        return false;
-      }
-    }
-
-    if (adminPassword) {
-      verifyPassword(adminPassword);
-    }
-
-    authForm.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      await verifyPassword(adminPasswordInput.value.trim());
-    });
-
-    logoutBtn.addEventListener('click', () => {
-      sessionStorage.removeItem('ADMIN_PASSWORD');
-      adminPassword = '';
-      adminPasswordInput.value = '';
-      authModal.classList.remove('hidden');
-    });
+    // 初回初期化
+    loadActiveItems();
 
     // タブ切り替え制御
     const tabButtons = document.querySelectorAll('.admin-tab');
