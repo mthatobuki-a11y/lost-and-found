@@ -362,9 +362,25 @@ def batch_dispose(req: BatchDisposeRequest, _: bool = Depends(verify_admin)):
     return {"message": f"{updated_count}件のアイテムを処分済みに更新しました。", "disposed_count": updated_count}
 
 
-# 静的ファイルの配信（すべてのAPIルート定義の後にマウント）
-os.makedirs("static", exist_ok=True)
-app.mount("/", StaticFiles(directory="static", html=True), name="static")
+from fastapi.responses import FileResponse
+
+# 静的ファイルの配信（staticフォルダにあってもルート直下にあっても自動対応）
+@app.get("/")
+def serve_index():
+    if os.path.exists("static/index.html"):
+        return FileResponse("static/index.html")
+    return FileResponse("index.html")
+
+
+@app.get("/admin.html")
+def serve_admin():
+    if os.path.exists("static/admin.html"):
+        return FileResponse("static/admin.html")
+    return FileResponse("admin.html")
+
+
+if os.path.exists("static"):
+    app.mount("/", StaticFiles(directory="static", html=True), name="static")
 
 
 if __name__ == "__main__":
