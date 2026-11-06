@@ -101,14 +101,14 @@
 
         <!-- Step 2: 登録フォーム -->
         <form id="registerForm" class="space-y-4">
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 items-start">
             <!-- カテゴリ -->
             <div>
               <label class="block text-xs font-bold text-slate-700 mb-1">カテゴリ <span class="text-red-500">*</span></label>
               <select
                 id="categorySelect"
                 required
-                class="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none text-sm font-medium"
+                class="w-full h-[42px] px-3 py-2 rounded-xl border border-slate-300 bg-white focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none text-sm font-medium appearance-none"
               >
                 <option value="タブレット">💻 タブレット</option>
                 <option value="スマホ">📱 スマホ</option>
@@ -129,33 +129,46 @@
                 id="foundDateInput"
                 type="date"
                 required
-                class="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none text-sm"
+                class="w-full h-[42px] px-3 py-2 rounded-xl border border-slate-300 bg-white focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none text-sm appearance-none"
               />
             </div>
           </div>
 
-          <!-- 拾得場所（自由手入力＋datalistサジェスト） -->
+          <!-- 拾得場所（ワンタップ候補ボタン ＋ 自由手入力） -->
           <div>
             <label class="block text-xs font-bold text-slate-700 mb-1">
-              拾得場所（自由手入力・候補サジェスト付） <span class="text-red-500">*</span>
+              拾得場所 <span class="text-red-500">*</span>
             </label>
+            <!-- スマホ用ワンタップ候補ボタン -->
+            <div class="flex flex-wrap gap-1.5 mb-2">
+              <button type="button" class="loc-chip px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-100 hover:bg-indigo-100 text-slate-700 hover:text-indigo-800 border border-slate-200 transition">
+                教室
+              </button>
+              <button type="button" class="loc-chip px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-100 hover:bg-indigo-100 text-slate-700 hover:text-indigo-800 border border-slate-200 transition">
+                体育館
+              </button>
+              <button type="button" class="loc-chip px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-100 hover:bg-indigo-100 text-slate-700 hover:text-indigo-800 border border-slate-200 transition">
+                グラウンド
+              </button>
+              <button type="button" class="loc-chip px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-100 hover:bg-indigo-100 text-slate-700 hover:text-indigo-800 border border-slate-200 transition">
+                廊下・階段
+              </button>
+              <button type="button" class="loc-chip px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-100 hover:bg-indigo-100 text-slate-700 hover:text-indigo-800 border border-slate-200 transition">
+                生徒昇降口
+              </button>
+              <button type="button" class="loc-chip px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-100 hover:bg-indigo-100 text-slate-700 hover:text-indigo-800 border border-slate-200 transition">
+                体育振興施設
+              </button>
+            </div>
+            <!-- 手入力・追記欄 -->
             <input
               id="foundLocationInput"
               type="text"
-              list="locationSuggestions"
               required
-              placeholder="例：体育館ステージ横、2年3組後ろ など"
+              placeholder="タップして候補を選択、または直接入力（例：教室 2-3後ろ）"
               class="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none text-sm"
             />
-            <datalist id="locationSuggestions">
-              <option value="教室"></option>
-              <option value="体育館"></option>
-              <option value="グラウンド"></option>
-              <option value="廊下・階段"></option>
-              <option value="生徒昇降口"></option>
-              <option value="体育振興施設"></option>
-            </datalist>
-            <p class="text-[11px] text-slate-400 mt-1">候補から選択後、「体育館ステージ横」のように直接追記・手入力できます。</p>
+            <p class="text-[11px] text-slate-400 mt-1">上のボタンをタップすると自動入力され、後ろに「2年3組」など続けて追記できます。</p>
           </div>
 
           <!-- 生徒公開用：特徴タグ（20字以内） -->
@@ -520,6 +533,15 @@
       } catch (err) {
         alert('画像の読み込み・圧縮に失敗しました: ' + err.message);
       }
+    });
+
+    // 拾得場所チップボタンのクリック連動
+    document.querySelectorAll('.loc-chip').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const text = btn.textContent.trim();
+        foundLocationInput.value = text;
+        foundLocationInput.focus();
+      });
     });
 
     // 文字数カウントと個人情報チェックボックス連動
